@@ -1,0 +1,120 @@
+#include <Arduino.h>
+#include <SPI.h>
+#include <MFRC522.h>
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+ 
+#define RST_PIN D3
+#define SS_PIN D8
+ 
+MFRC522 mfrc522(SS_PIN, RST_PIN);
+LiquidCrystal_I2C lcd(0x27,20,4);
+ 
+String rfid_in = "";
+String dump_byte_array(byte *buffer, byte bufferSize);
+String rfid_in_check = " 55 57 87 2A";
+unsigned long previousMillis = 0;  // ตัวแปรเก็บเวลาที่ผ่านมา
+const long interval = 3000;        // กำหนดช่วงเวลา 6000 ms หรือ 6 วินาที
+bool waitingForCard = false;
+
+
+const int CARD_WAIT = 0;
+const int CARD_TOUCH = 1;
+const int BOTTON_PUSH = 2;
+const int BOTTON_PUSHRST = 3;
+int state;
+unsigned long currentMillis;
+ 
+void setup() {
+  state = CARD_WAIT;
+  Serial.begin(115200);
+  SPI.begin();
+  mfrc522.PCD_Init();
+  mfrc522.PCD_DumpVersionToSerial();
+  Wire.begin(D4,D9);
+  pinMode(D1, INPUT);
+  pinMode(D2, INPUT);
+  pinMode(D0, OUTPUT);
+  lcd.init();                      // initialize the lcd 
+  lcd.backlight();
+  lcd.clear();
+}
+ 
+void loop() {
+  currentMillis = millis(); // Read current time in loop to ensure it's updated correctly
+  if (state == CARD_WAIT) {
+    if (mfrc522.PICC_IsNewCardPresent() && mfrc522.PICC_ReadCardSerial()) {
+      state = CARD_TOUCH;
+      delay(500);
+    } else if (digitalRead(D2) == 1) {
+      delay(50);
+      Serial.println("Reset");
+      state = BOTTON_PUSHRST;
+      waitingForCard = true;
+      previousMillis = currentMillis;
+    }else if(digitalRead(D1) == 1){
+      delay(50);
+      state = BOTTON_PUSH;
+    }
+  } else if (state == CARD_TOUCH) {
+    lcd.clear();
+    rfid_in = dump_byte_array(mfrc522.uid.uidByte, mfrc522.uid.size);
+    if (rfid_in.equals(rfid_in_check)) {
+      Serial.print("Card UID: ");
+      Serial.println(rfid_in);
+      Serial.println("Welcome");
+      lcd.setCursor(0,0);
+      lcd.print("Welcome");
+      digitalWrite(D0, HIGH);
+      delay(1000);
+      digitalWrite(D0, LOW);
+      lcd.clear();
+    } else {
+      Serial.print("Card UID: ");
+      Serial.println(rfid_in);
+      Serial.println("Access Denied");
+      lcd.setCursor(0,0);
+      lcd.print("Access Denied");
+      delay(1000);
+      lcd.clear();
+    }
+    state = CARD_WAIT;
+  } else if (state == BOTTON_PUSH) {
+    Serial.println("Bye");
+    digitalWrite(D0, HIGH);
+    delay(1000);
+    digitalWrite(D0, LOW);
+    state = CARD_WAIT;
+  } else if (state == BOTTON_PUSHRST) {
+    lcd.clear();
+    if (waitingForCard) {
+      if (currentMillis - previousMillis <= interval) {
+        if (mfrc522.PICC_IsNewCardPresent() && mfrc522.PICC_ReadCardSerial()) {
+          rfid_in = dump_byte_array(mfrc522.uid.uidByte, mfrc522.uid.size);
+          Serial.print("Card UID: ");
+          Serial.print(rfid_in_check);
+          Serial.print(" is change UID to: ");
+          Serial.println(rfid_in);
+          rfid_in_check = rfid_in; // Update the reference UID
+          state = CARD_WAIT; // Return to waiting state after successful update
+          waitingForCard = false; // Reset the waiting flag
+        }
+      } else {
+        Serial.println("Time Out");
+        state = CARD_WAIT; // Return to waiting state after timeout
+        waitingForCard = false; // Reset the waiting flag
+      }
+    }
+  }
+  delay(500);
+}
+ 
+String dump_byte_array(byte *buffer, byte bufferSize) {
+  String content = "";
+  for (byte i = 0; i < bufferSize; i++) {
+    content.concat(String(buffer[i] < 0x10 ? " 0" : " "));
+    content.concat(String(buffer[i], HEX));
+  }
+  content.toUpperCase();
+  return content;
+}
